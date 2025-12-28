@@ -1,0 +1,1084 @@
+// === BUILD: RLP_V4.1 ===
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0)
+//@version=6
+// © aj p’óolom máasewal
+// © Trendoscope Pty Ltd 
+// Introducción //
+// Este indicador está basado originalmente en un soft fork del Indicador Multi-Timeframe Recursive Zigzag de ©Trendoscope.
+// Hemos utilizado la tecnología de sus librerías para la generación de Zigzags de manera que el usuario tenga la libertad de escoger
+// cuál de los diferentes Zigzags que se calculan por Trendoscope como "Niveles" es el más adecuado para adaptarse a la generación
+// de las fases ideales para su evaluación y selección como fases "más preponderantes", en períodos de largo plazo, de cualquier activo
+// de acuerdo a su comportamiento en particular según su volatibilidad y ritmo de variación del precio.
+//
+// Fundamento Teórico del Indicador //
+// Muchos de los inversores institucionales tradicionales utilizan la última fase de mercado de grado mayor que sobresale
+// de las demás (mayor duración y mayor cambio de precio en temporalidad diaria), para basar un Fibonacci en cuyos niveles
+// abren posiciones de largo plazo. Esas posiciones pueden quedar abiertas para activarse en el futuro hasta con años de antelación.
+// Se considera que la fase tiene vigencia hasta que en el futuro se desarrolla otra nueva fase más preponderante; con la cual
+// se repite la misma estrategia.
+//
+// Objetivos del indicador //
+// 1) Encontrar de manera automática la última fase más preponderante de un activo, analizándolo en temporalidad diaria y
+//    tomando en cuenta si la tendencia del mercado a largo plazo es alcista o bajista.
+// 2) Trazar un Retroceso de Fibonacci sobre la fase prepondeante (revertido si la fase es alcista.)
+// 3) El indicador numera y localiza las 3 fases más preponderantes, de las cuales escoge a la Top-1 para el trazado.
+// 4) Si el usuario no concuerda con la selección automática del indicador, tiene la libertad de escoger a cualquiera de las
+//    otras 2 fases Top para el trazado del Fibo y sus niveles.
+// 5) Si el usuario no concuerda con la amplitud o la frecuencia de las fases del Zigzag trazado, puede modificar los parámetros
+//    del cálculo del Zigzag del algoritmo de ©Trendoscope hasta que una de las Top-3 coincida con la fase que tiene mentalizada.
+// 6) Como bonus experimental, el indicador ejecuta un concurso (CP) de tiro al blanco de coincidencias de precios (OHLC) diarios con todos los
+//    niveles Fibo de las Top 3 fases seleccionadas, para comprobar cuál es la fase que están validando los precios del mercado
+//    como la más popular para colocar operaciones. Los resultados del concurso se despliegan en al columna CP de la tabla Top-3 fases.
+//    Si como resultado del concurso se detecta que hay un cambio en la fase ganadora, se puede habilitar un switch para que se active
+//    una alerta que el usuario puede utilizar con el creador de alertas de Tradingview para que le muestre una alarma, le mande
+//    un email, etc.
+// 7) Este indicador fué diseñado para que el usuario encuentre la fase preponderante de largo plazo de sus activos y registre a mano
+//    las coordenadas fecha, precio de las anclas io-i1 de la fase preponderante. Las coordenadas de la fase Top-1 se muestran en la tabla
+//    Top-3 fases de donde la puede capturar el usuario. Las coordenadas fecha, precio de todos los pivots HH y LL, de todas las fases del Zigzag,
+//    aparecen mediante un switch. Con los pivots, el usuario puede buscar o seleccionar otra fase diferente a las encontradas automáticamente
+//    por el indicador, de acuerdo a su investigación propia. Posteriormente, el usuario se olbida por un buen rato de este indicador RLP y pasa a
+//    aplicar en su opertiva normal nuestro indicador RLPS (Refugios de largo plazo simplificado), en el cual puede trazar y dar seguimiento
+//    simultaneo a los refugios de largo plazo de hasta 5 diferentes activos, con tan sólo introducir sus correspondientes coordenadas fecha, precio,
+//    las que fueron calculadas con este indicador RLP.
+//
+// Notas adicionales //
+// 1) A la fecha de publicación de la versión v1.0 de RLP (12/2025), los parámetros de generación del Zigzag de ©Trendoscope se ajustaron por default
+//    para encontrar las fases prepoderantes de largo plazo de Bitcoin y Etherum (Pandemia 2020-2021). Los niveles mostrados en el gráfico, corresponden
+//    a los resultados obtenidos usando los datos diarios del exchange Bitstamp, BTCUSD:BITSTAMP (popular en Europa).
+// 2) Debido a las estrictas reglas de publicación de Tradingview relacionadas con el uso de lenguajes diferentes al inglés, la versión en español
+//    (román paladino) completa, con todos las entradas, ayudas (tooltips) y referecias bibliográficas, estará próximamente disponible en nuestro
+//    repositorio de GH: aj-poolom-maasewal. Cualquier corrección o mejora que se le puedan hacer a los algoritmos de selección de fases o 
+//    al algoritmo del concurso CP de fases, serán altamente apreciados (La ciencias estadísticas, matemáticas y financieras, entre otras muchas,
+//    no son particularmente nuestro fuerte).
+//
+// Llamadas a las bibliotecas propiedad de ©Trendoscope
+//
+import Trendoscope/Zigzag/11 as zg
+import Trendoscope/utils/1 as ut
+import Trendoscope/alerts/1 as ra
+
+indicator('Refugios de Largo Plazo (RLP)', 'RLP_V4.1', overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ============================================================
+// AJUSTES GENERALES
+// ============================================================
+cp_group = "CONCURSO DE ACIERTOS A NIVELES FIBO DE LAS TOP-3 FASES"
+
+// SWITCH SUPREMO - Control maestro de todos los gráficos
+disable_all_graphics = input.bool(false, '🔴 Apagar Gráficos en Pantalla', 
+     tooltip = 'Switch maestro que desactiva TODOS los gráficos del indicador (ZigZag, Top-3 fases, Fibonacci, LP, CP, Tabla). ' +
+               'Los cálculos se mantienen, solo se oculta la visualización. Útil para:\n' +
+               '• Análisis limpio del precio sin líneas\n' +
+               '• Tomar screenshots del gráfico base\n' +
+               '• Reducir carga visual temporalmente\n' +
+               '• Presentaciones donde solo quieres el precio', 
+     group = 'UTILERÍAS')
+
+refresh_indicator = input.bool(false, 'Refrescar indicador (toggle)', 
+     tooltip = 'Activa/desactiva para forzar recálculo/redibujado.\n\n' +
+               '📽️ USO CON REPRODUCTOR DE BARRAS:\n' +
+               'Debido a limitaciones de la librería Trendoscope/Zigzag, los gráficos desaparecen durante reproducción activa.\n' +
+               'SOLUCIÓN: Pausa el reproductor → Toggle este switch ON/OFF → Los gráficos reaparecen → Continúa reproducción.\n\n' +
+               'Esto es una limitación conocida de la librería externa, no un bug del indicador.', 
+     group = 'UTILERÍAS')
+
+var bool enableAlerts = false
+theme = input.enum(ut.Theme.DARK, title = 'Tema', group = 'AJUSTES GENERALES', tooltip = 'Configuración del tema del gráfico.', display = display.none)
+
+highSource = input.source(high, '', inline = 'cs', group = 'APOYOS (OHLC) DE TRAZADO DEL ZIGZAG', display = display.none)
+lowSource = input.source(low, '', inline = 'cs', group = 'APOYOS (OHLC) DE TRAZADO DEL ZIGZAG', display = display.none)
+
+timeframe = input.timeframe('', 'Timeframe', group = 'CÁLCULO DEL ZIGZAG', display = display.none, tooltip = "Timeframe para el cálculo del Zigzag. Dejar vacío para usar el timeframe actual del gráfico.")
+
+zigzagLength = input.int(5, step = 1, minval = 1, title = 'Length', group = 'CÁLCULO DEL ZIGZAG', display = display.none, tooltip="SENSIBILIDAD DEL ALGORITMO ZIGZAG (Librería Trendoscope)\n\nControla qué tan reactivo es el algoritmo a movimientos de precio.\n\n• VALOR BAJO (1-3): MUY sensible → Detecta muchos pivotes pequeños → ZigZag detallado\n• VALOR MEDIO (4-7): Balance → Detecta swing importantes sin ruido excesivo\n• VALOR ALTO (8-15): POCO sensible → Solo swing muy significativos → ZigZag limpio\n\n💡 Para FASES PREPONDERANTES grandes: Usar valores bajos (3-5) en Highlight alto (3-5)\n💡 Para análisis de corto plazo: Usar valores bajos (2-4) en Highlight bajo (0-2)\n\nRELACIÓN CON HIGHLIGHT:\n• Length controla la SENSIBILIDAD base del Zigzag\n• Highlight controla el NIVEL DE AGREGACIÓN que se usa para búsqueda\nAmbos trabajan juntos para encontrar fases del tamaño deseado.")
+
+depth = input.int(550, 'Depth', step = 25, maxval = 1000, group = 'CÁLCULO DEL ZIGZAG', display = display.none, tooltip="LÍMITE DE OBJETOS EN MEMORIA (History Buffer)\n\nDefine cuántos pivotes del Zigzag mantiene la librería en memoria para análisis.\n\n• NO afecta el cálculo del Zigzag\n• NO cambia la sensibilidad o detección de pivotes\n• SÍ afecta cuánta historia está disponible para buscar fases\n\n• VALOR BAJO (100-300): Menos historia → Análisis de corto plazo → Más rápido\n• VALOR MEDIO (300-500): Balance → Suficiente historia para análisis general\n• VALOR ALTO (500-1000): Máxima historia → Análisis de largo plazo → Más lento\n\n💡 Recomendado: 450 para balance óptimo entre historia y performance\n💡 Si necesitas analizar más historia: Aumentar hasta 800-1000\n💡 Si hay problemas de performance: Reducir a 200-300\n\nDIFERENCIA CON LENGTH:\n• Length = Sensibilidad del algoritmo (controla CÓMO se detectan pivotes)\n• Depth = Tamaño del buffer (controla CUÁNTA historia se guarda)")
+
+highlight = input.int(3, "Nivel Seleccionado", group = 'CÁLCULO DEL ZIGZAG', minval = 0, display = display.none, tooltip="NIVEL DE AGREGACIÓN DEL ZIGZAG PARA BÚSQUEDA DE FASES\n\nLa librería Zigzag genera múltiples niveles de agregación (0-5).\nEste parámetro selecciona qué nivel usar para buscar las 3 fases preponderantes.\n\n• NIVEL 0 (Base): Zigzag original sin agregación → Muchos pivotes pequeños\n• NIVEL 1-2 (Bajo): Primera agregación → Pivotes de tamaño pequeño-mediano\n• NIVEL 3 (RECOMENDADO): Agregación media → Balance perfecto para fases preponderantes\n• NIVEL 4-5 (Alto): Alta agregación → Solo las fases más grandes y significativas\n\n💡 Para fases de LARGO PLAZO (semanas/meses): Usar nivel 3-5\n💡 Para fases de CORTO PLAZO (días): Usar nivel 0-2\n💡 Para análisis GENERAL: Usar nivel 3 (default)\n\nEXPERIMENTO:\nPrueba cambiar este valor mientras observas la tabla Top-3:\n• Nivel más bajo → Fases más pequeñas y frecuentes\n• Nivel más alto → Fases más grandes y menos frecuentes")
+
+showHighlightTrace = input.bool(defval = true, title = "Mostrar trazo del nivel seleccionado", group = 'CÁLCULO DEL ZIGZAG', tooltip="Dibuja el Zigzag del nivel seleccionado en el gráfico para visualización")
+
+// Estilo personalizado para NIVEL SELECCIONADO
+zz_sel_use_custom = input.bool(false, "Usar estilo personalizado para nivel seleccionado", group = 'CÁLCULO DEL ZIGZAG')
+zz_sel_color      = input.color(color.orange, "Color", group = 'CÁLCULO DEL ZIGZAG', inline="zzsel1")
+zz_sel_op         = input.int(0, "Opacidad (0–100)", minval=0, maxval=100, group = 'CÁLCULO DEL ZIGZAG', inline="zzsel1")
+zz_sel_style      = input.string("Sólida", "Estilo", options = ["Sólida","Discontinua","Punteada"], group = 'CÁLCULO DEL ZIGZAG', inline="zzsel2")
+zz_sel_w          = input.int(2, "Grosor", minval=1, maxval=4, group = 'CÁLCULO DEL ZIGZAG', inline="zzsel2")
+
+showSublevels = input.bool(false, 'Mostrar subniveles (no seleccionados)', group = 'CÁLCULO DEL ZIGZAG')
+
+// MOVIDO DESDE UTILERÍAS - Etiquetas de coordenadas en pivots
+showLabels = input.bool(false, 'Mostrar etiquetas en pivots principales', 
+     tooltip = 'Activa etiquetas en los pivots del nivel seleccionado mostrando:\n' +
+               '• Tipo de pivot (HH/HL/LH/LL)\n' +
+               '• Fecha y hora del pivot\n' +
+               '• Precio exacto (High o Low)\n' +
+               'Útil para anotar las coordenadas (precio, fecha) de las anclas i0-i1 de la fase preponderante elegida y pasarlas al indicador RLPS, el cual recalcula el Fibo y lo mantiene constante para uso en otras termporalidades (4H, D, S, M) y/o con el mismo activo pero de otro Exchange.',
+     group = 'CÁLCULO DEL ZIGZAG')
+
+// ============================================================
+// BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES
+// ============================================================
+ptq_regime = input.string("Alcista", "Sesgo/Pauta del Mercado", options = ["Alcista","Plano(a)","Bajista"], group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES')
+ptq_useParab = input.bool(false, "Incluir parabolicidad (γ)", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline = "ptq1")
+ptq_gamma    = input.float(0.5, "γ", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline = "ptq1", minval = 0.0, step = 0.1)
+ptq_showDiag = input.bool(true, "Mostrar tabla de Top-3 fases preponderantes", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES')
+ptq_table_pos = input.string("bottom_right", "Posición de la tabla Top-3", options=["top_left","top_center","top_right","middle_left","middle_center","middle_right","bottom_left","bottom_center","bottom_right"], group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES')
+ptq_tbl_text_color = input.color(color.white, "Color del texto de tabla Top-3", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="tcol")
+ptq_tbl_text_opacity = input.int(50, "Opacidad texto (0–100)", minval=0, maxval=100, group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="tcol")
+
+ptq_showCandidates = input.bool(true, "Dibujar Top-3 fases sobre Nivel seleccionado", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES')
+
+// Señales globales para alerta
+var int  cp_prevLeader = na
+var int  cp_leader_sig = na
+var bool cp_changed_signal = false
+
+// Variables para almacenar coordenadas de fase seleccionada para Fibonacci (usadas en plots)
+var int   i0_sel = na
+var int   i1_sel = na
+var float y0_sel = na
+var float y1_sel = na
+
+ptq_cand_w = input.int(4, "Grosor", minval=1, maxval=4, group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="cand")
+ptq_cand_style = input.string('Discontinua', 'Estilo', options=['Sólida','Discontinua','Punteada'], group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline='cand')
+ptq_c1 = input.color(color.lime, "C1", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="ccol")
+ptq_c2 = input.color(color.orange, "C2", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="ccol")
+ptq_c3 = input.color(color.fuchsia, "C3", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="ccol")
+ptq_cand_lbl_txt = input.color(color.white, "Color texto etiquetas Top-3", group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="clbl")
+ptq_cand_lbl_bg_op = input.int(70, "Opacidad fondo (0–100)", minval=0, maxval=100, group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES', inline="clbl")
+ptq_cand_lbl_size = input.string("14", "Tamaño texto etiquetas Top-3", options=["10","12","14","16","20"], group = 'BÚSQUEDA PTQ DE 3 FASES MAS PREPONDERANTES')
+
+// ============================================================
+// FIBONACCI (anclado a Fase Preponderante)
+// ============================================================
+fib_enable = input.bool(true, "Habilitar cálculo y trazo del Fibo", group="FIBO EN FASE PREPONDERANTE (F.P.)")
+fib_logScale = input.bool(false, "Usar escala logarítmica", group="FIBO EN FASE PREPONDERANTE (F.P.)")
+fib_reversed = input.bool(true, "Revertir", group="FIBO EN FASE PREPONDERANTE (F.P.)")
+fib_candidate_source = input.string("Auto (Top-1)", "Elección de Fase Top para Trazo del Fibo", options=["Auto (Top-1)","Top-1","Top-2","Top-3"], group="FIBO EN FASE PREPONDERANTE (F.P.)")
+
+// Etiquetas Fibo
+lbl_margin_bars = input.int(10, "Margen de etiquetas (barras)", minval = -50, maxval = 200, group = 'FIBONACCI F.P. - Etiquetas')
+fib_lbl_show_price = input.bool(true, "Mostrar precio", group = "FIBONACCI F.P. - Etiquetas")
+fib_lbl_show_value = input.bool(true, "Mostrar valor Fibo", group = "FIBONACCI F.P. - Etiquetas")
+fib_lbl_mode = input.string("porcentaje", "Contenido de nivel", options=["porcentaje","original"], group="FIBONACCI F.P. - Etiquetas")
+fib_lbl_round_price = input.bool(false, "Redondear precios a enteros", group = "FIBONACCI F.P. - Etiquetas")
+fib_lbl_color = input.color(color.blue, "Color de etiquetas", group = "FIBONACCI F.P. - Etiquetas")
+fib_lbl_font = input.string("14", "Tamaño de fuente", options=["10","12","14","16","20"], group = "FIBONACCI F.P. - Etiquetas")
+
+// Línea 0→1 del Fibo
+fib_trend_on   = input.bool(true, "Mostrar línea 0→1", group = "LÍNEA 0→1 DEL FIBO", inline="t0")
+fib_trend_col  = input.color(#FFFFFF80, "", group = "LÍNEA 0→1 DEL FIBO", inline="t0")
+fib_trend_style = input.string("Discontinua", "Estilo", options=["Sólida","Discontinua","Punteada"], group = "LÍNEA 0→1 DEL FIBO", inline="t1")
+fib_trend_w    = input.int(4, "Grosor", minval=1, maxval=4, group = "LÍNEA 0→1 DEL FIBO", inline="t1")
+
+// Estilo global líneas Fibo
+fib_lvl_style_s = input.string("Discontinua", "Estilo niveles", options=["Sólida","Discontinua","Punteada"], group = "LINEAS DE NIVEL DEL FIBO DE F.P.")
+fib_lvl_style_w = input.int(1, "Grosor global niveles", minval=1, maxval=4, group = "LINEAS DE NIVEL DEL FIBO DE F.P.")
+fib_lvl_global_color = input.color(color.blue, "Color global de niveles", group = "LINEAS DE NIVEL DEL FIBO DE F.P.")
+
+// ============================================================
+// NIVELES FIBONACCI - VALORES ESTÁNDAR
+// ============================================================
+// VALORES ESTÁNDAR (inline en 3 líneas)
+fibo0    = input.bool(true, "0%", inline="f1", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo236  = input.bool(true, "23.6%", inline="f1", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo382  = input.bool(true, "38.2%", inline="f1", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo50   = input.bool(true, "50%", inline="f2", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo618  = input.bool(true, "61.8%", inline="f2", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo786  = input.bool(false, "78.6%", inline="f2", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo812  = input.bool(true, "81.2%", inline="f3", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo100  = input.bool(true, "100%", inline="f3", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo1236 = input.bool(false, "123.6%", inline="f3", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+
+// MÚLTIPLOS DE 25%
+fibo125  = input.bool(true, "125%", inline="f4", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo150  = input.bool(true, "150%", inline="f4", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo1618 = input.bool(true, "161.8%", inline="f5", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo200  = input.bool(true, "200%", inline="f5", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo250  = input.bool(false, "250%", inline="f5", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo2618 = input.bool(false, "261.8%", inline="f6", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+
+// VARIABLES PERSONALIZADAS (solo 2, desactivadas por default)
+fibo_custom1_on  = input.bool(false, "Custom 1", inline="fc1", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo_custom1_val = input.float(0.0, "", inline="fc1", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo_custom2_on  = input.bool(false, "Custom 2", inline="fc2", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+fibo_custom2_val = input.float(0.0, "", inline="fc2", group="LINEAS DE NIVEL DEL FIBO DE F.P.")
+
+// Arrays de niveles para compatibilidad con código existente
+var fib_levels_enabled = array.from(fibo0, fibo236, fibo382, fibo50, fibo618, fibo786, fibo812, fibo100, fibo1236, fibo125, fibo150, fibo1618, fibo200, fibo250, fibo2618, fibo_custom1_on, fibo_custom2_on, false)
+var fib_levels_values = array.from(0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 0.812, 1.0, 1.236, 1.25, 1.5, 1.618, 2.0, 2.5, 2.618, fibo_custom1_val, fibo_custom2_val, 0.0)
+
+// ============================================================
+// CONCURSO DE ACIERTOS A NIVELES FIBO DE LAS TOP-3 FASES
+// ============================================================
+calc_popularity = input.bool(true, "Calcular índice de popularidad (CP) de las Top-3 fases", group=cp_group)
+cp_freeze_old = input.bool(true, "Congelar la ΣCP de las fases anteriores a FP-1 después de su i0-i1", group=cp_group)
+
+// Parámetros del concurso de popularidad
+pop_tol_pct = input.float(1.0, "Tolerancia ±%", step=0.1, minval=0.1, maxval=5.0, group=cp_group)
+useO = input.bool(true, "Open", group=cp_group, inline="ohlc")
+useH = input.bool(true, "High", group=cp_group, inline="ohlc")
+useL = input.bool(true, "Low",  group=cp_group, inline="ohlc")
+useC = input.bool(true, "Close",group=cp_group, inline="ohlc")
+only_active_levels = input.bool(true, "Contar sólo niveles Fibo activos", group=cp_group)
+
+cp_alert_on_change = input.bool(true, "Alerta cuando cambie la fase ganadora del CP", group=cp_group)
+alertcondition(cp_alert_on_change and cp_changed_signal, "Cambio de líder CP", "El líder del índice CP ha cambiado.")
+
+// ============================================================
+// FUNCIONES HELPER
+// ============================================================
+f_font_enum(sz) =>
+    sz == "10" ? size.tiny : sz == "12" ? size.small : sz == "14" ? size.normal : sz == "16" ? size.large : size.huge
+
+f_line_style(s) =>
+    s == "Sólida" ? line.style_solid : s == "Discontinua" ? line.style_dashed : line.style_dotted
+
+f_apply_op(c, op) =>
+    color.new(c, math.max(0, math.min(100, op)))
+
+// ============================================================
+// OPTIMIZACIÓN PERFORMANCE: Caché de valores pre-calculados
+// ============================================================
+// Cachear conversiones de estilo (calculadas 1 sola vez en lugar de cientos)
+var line_style_fib_cached = f_line_style(fib_lvl_style_s)
+var line_style_trend_cached = f_line_style(fib_trend_style)
+var line_style_cand_cached = f_line_style(ptq_cand_style)
+
+// Cachear tamaños de fuente
+var size_fib_lbl_cached = f_font_enum(fib_lbl_font)
+var size_ptq_lbl_cached = f_font_enum(ptq_cand_lbl_size)
+
+// Pre-calcular constante de tolerancia
+var float pop_tolerance = pop_tol_pct * 0.01
+
+// Límite temporal para loops de popularidad (optimización crítica)
+// Limita el análisis a las últimas N barras para evitar loops masivos
+var int MAX_BARS_POPULARITY = 500  // Ajustable: 500 barras = ~2 meses en daily
+
+f_left_label_x(left_i) =>
+    lx = left_i - lbl_margin_bars
+    lx < 0 ? 0 : lx
+
+f_right_label_x() =>
+    rx = bar_index + lbl_margin_bars
+    rx < 0 ? 0 : rx
+
+// Formateo de precio simplificado (usar mintick nativo)
+f_fmt_price(x) =>
+    str.tostring(x, format.mintick)
+
+// Formateo de precio para etiquetas Fibo con redondeo opcional y separadores de comas
+f_fib_price_text(p) =>
+    // Aplicar redondeo si está habilitado
+    priceVal = fib_lbl_round_price ? math.round(p) : p
+    priceStr = fib_lbl_round_price ? str.tostring(priceVal) : str.tostring(priceVal, format.mintick)
+    dotPos = str.pos(priceStr, ".")
+    
+    if dotPos >= 0
+        intPart = str.substring(priceStr, 0, dotPos)
+        decPart = str.substring(priceStr, dotPos, str.length(priceStr))
+        intLen = str.length(intPart)
+        result = ""
+        
+        for i = 0 to intLen - 1
+            digit = str.substring(intPart, i, i + 1)
+            result := result + digit
+            remainingDigits = intLen - i - 1
+            if remainingDigits > 0 and remainingDigits % 3 == 0
+                result := result + ","
+        
+        result + decPart
+    else
+        intLen = str.length(priceStr)
+        result = ""
+        
+        for i = 0 to intLen - 1
+            digit = str.substring(priceStr, i, i + 1)
+            result := result + digit
+            remainingDigits = intLen - i - 1
+            if remainingDigits > 0 and remainingDigits % 3 == 0
+                result := result + ","
+        
+        result
+
+// Formateo de precio con separadores de miles para etiquetas LP
+f_price_text(p) =>
+    priceStr = str.tostring(p, format.mintick)
+    dotPos = str.pos(priceStr, ".")
+    
+    if dotPos >= 0
+        intPart = str.substring(priceStr, 0, dotPos)
+        decPart = str.substring(priceStr, dotPos, str.length(priceStr))
+        intLen = str.length(intPart)
+        result = ""
+        
+        for i = 0 to intLen - 1
+            digit = str.substring(intPart, i, i + 1)
+            result := result + digit
+            remainingDigits = intLen - i - 1
+            if remainingDigits > 0 and remainingDigits % 3 == 0
+                result := result + ","
+        
+        result + decPart
+    else
+        intLen = str.length(priceStr)
+        result = ""
+        
+        for i = 0 to intLen - 1
+            digit = str.substring(priceStr, i, i + 1)
+            result := result + digit
+            remainingDigits = intLen - i - 1
+            if remainingDigits > 0 and remainingDigits % 3 == 0
+                result := result + ","
+        
+        result
+
+// ============================================================
+// PTQ: Búsqueda de Top-3 fases preponderantes
+// ============================================================
+f_ptq_for_level(zglevel, useParab, gamma, regime) =>
+    float bestS1 = na
+    float bestS2 = na
+    float bestS3 = na
+    int b1_i0 = na
+    int b1_i1 = na
+    int b2_i0 = na
+    int b2_i1 = na
+    int b3_i0 = na
+    int b3_i1 = na
+    float b1_y0 = na
+    float b1_y1 = na
+    float b2_y0 = na
+    float b2_y1 = na
+    float b3_y0 = na
+    float b3_y1 = na
+    float b1_A = na
+    float b1_T = na
+    float b1_P = na
+    float b2_A = na
+    float b2_T = na
+    float b2_P = na
+    float b3_A = na
+    float b3_T = na
+    float b3_P = na
+
+    pivsz = zglevel.zigzagPivots.size()
+    if pivsz > 1
+        for i = 0 to pivsz - 2
+            p0 = zglevel.zigzagPivots.get(i)
+            p1 = zglevel.zigzagPivots.get(i+1)
+            i0 = p0.point.index
+            i1 = p1.point.index
+            y0 = p0.point.price
+            y1 = p1.point.price
+            if i1 == i0
+                continue
+            A = math.abs(math.log(y1 / y0))
+            T = math.abs(i1 - i0)
+            mid = math.floor((i0 + i1) * 0.5)
+            off = bar_index - mid
+            float pmid = na
+            if off >= 0 and off <= bar_index
+                pmid := nz(close[off])
+            yline = y0 + (y1 - y0) * ((mid - i0) / (i1 - i0))
+            PARA = na(pmid) or y1 == y0 ? 0.0 : math.abs(pmid - yline) / math.max(1e-10, math.abs(y1 - y0))
+
+            s = A * T
+            if useParab
+                s := s * (1 + gamma * PARA)
+
+            laterIdx = i0 > i1 ? i0 : i1
+            laterPr = i0 > i1 ? y0 : y1
+            earlierPr = i0 > i1 ? y1 : y0
+            isBullDir = laterPr > earlierPr
+            isBearDir = laterPr < earlierPr
+            dirOK = regime == "Plano(a)" or (regime == "Alcista" and isBullDir) or (regime == "Bajista" and isBearDir)
+            if not dirOK
+                continue
+
+            if na(bestS1) or s > bestS1
+                bestS3 := bestS2
+                b3_i0 := b2_i0
+                b3_i1 := b2_i1
+                b3_y0 := b2_y0
+                b3_y1 := b2_y1
+                b3_A := b2_A
+                b3_T := b2_T
+                b3_P := b2_P
+                bestS2 := bestS1
+                b2_i0 := b1_i0
+                b2_i1 := b1_i1
+                b2_y0 := b1_y0
+                b2_y1 := b1_y1
+                b2_A := b1_A
+                b2_T := b1_T
+                b2_P := b1_P
+                bestS1 := s
+                b1_i0 := i0
+                b1_i1 := i1
+                b1_y0 := y0
+                b1_y1 := y1
+                b1_A := A
+                b1_T := T
+                b1_P := PARA
+            else if na(bestS2) or s > bestS2
+                bestS3 := bestS2
+                b3_i0 := b2_i0
+                b3_i1 := b2_i1
+                b3_y0 := b2_y0
+                b3_y1 := b2_y1
+                b3_A := b2_A
+                b3_T := b2_T
+                b3_P := b2_P
+                bestS2 := s
+                b2_i0 := i0
+                b2_i1 := i1
+                b2_y0 := y0
+                b2_y1 := y1
+                b2_A := A
+                b2_T := T
+                b2_P := PARA
+            else if na(bestS3) or s > bestS3
+                bestS3 := s
+                b3_i0 := i0
+                b3_i1 := i1
+                b3_y0 := y0
+                b3_y1 := y1
+                b3_A := A
+                b3_T := T
+                b3_P := PARA
+
+    [bestS1, b1_i0, b1_i1, b1_y0, b1_y1, b1_A, b1_T, b1_P,
+     bestS2, b2_i0, b2_i1, b2_y0, b2_y1, b2_A, b2_T, b2_P,
+     bestS3, b3_i0, b3_i1, b3_y0, b3_y1, b3_A, b3_T, b3_P]
+
+// ============================================================
+// FIBONACCI: Dibujo y gestión
+// ============================================================
+var line fibTrend = na
+var fibLines = array.new_line()
+var fibLabels = array.new_label()
+var candLines = array.new_line()
+var candLabels = array.new_label()
+
+f_clear_fib(ft) =>
+    line _ret = na
+    if not na(ft)
+        line.delete(ft)
+    nL = array.size(fibLines)
+    if nL > 0
+        for ii = 0 to nL - 1
+            line.delete(array.get(fibLines, ii))
+    nB = array.size(fibLabels)
+    if nB > 0
+        for jj = 0 to nB - 1
+            label.delete(array.get(fibLabels, jj))
+    fibLines.clear()
+    fibLabels.clear()
+    _ret
+
+f_clear_candidates() =>
+    nL = array.size(candLines)
+    if nL > 0
+        for ii = 0 to nL - 1
+            line.delete(array.get(candLines, ii))
+    nB = array.size(candLabels)
+    if nB > 0
+        for jj = 0 to nB - 1
+            label.delete(array.get(candLabels, jj))
+    candLines.clear()
+    candLabels.clear()
+
+// Dibujo Fibonacci OPTIMIZADO con arrays
+f_draw_fib(i0, y0, i1, y1) =>
+    bs = fib_reversed ? y1 : y0
+    be = fib_reversed ? y0 : y1
+    bsL = fib_logScale ? math.log(bs) : bs
+    beL = fib_logScale ? math.log(be) : be
+
+    left_i = i0 <= i1 ? i0 : i1
+    left_y = i0 <= i1 ? y0 : y1
+    right_i = i0 <= i1 ? i1 : i0
+    right_y = i0 <= i1 ? y1 : y0
+
+    line trend = na
+    if fib_trend_on
+        // OPTIMIZACIÓN: Usar estilo cacheado en lugar de calcular
+        trend := line.new(left_i, left_y, right_i, right_y, xloc = xloc.bar_index, extend = extend.none, width = fib_trend_w, style = line_style_trend_cached, color = fib_trend_col)
+
+    // Loop optimizado por niveles activos
+    for j = 0 to 17
+        if array.get(fib_levels_enabled, j)
+            L = array.get(fib_levels_values, j)
+            col = fib_lvl_global_color  // Usar color global único
+            price = fib_logScale ? math.exp(bsL + (beL - bsL) * L) : (bs + (be - bs) * L)
+            
+            // OPTIMIZACIÓN: Usar estilo y tamaño cacheados
+            l = line.new(left_i, price, bar_index + 5, price, xloc = xloc.bar_index, extend = extend.none, width = fib_lvl_style_w, style = line_style_fib_cached, color = col)
+            array.push(fibLines, l)
+            
+            txt = ""
+            if fib_lbl_show_value
+                txt := fib_lbl_mode == "porcentaje" ? (str.tostring(L * 100) + "%") : str.tostring(L)
+            if fib_lbl_show_price
+                ptxt = f_fib_price_text(price)
+                txt := (str.length(txt) > 0 ? txt + " — " : "") + ptxt
+            
+            // OPTIMIZACIÓN: Usar tamaño cacheado y color selector
+            lbL = label.new(f_left_label_x(left_i), price, txt, xloc = xloc.bar_index, textalign = text.align_right, style = label.style_label_right, textcolor = fib_lbl_color, color = color.new(color.black, 100), size = size_fib_lbl_cached)
+            array.push(fibLabels, lbL)
+            // OPTIMIZACIÓN: Usar tamaño cacheado y color selector
+            lbR = label.new(f_right_label_x(), price, txt, xloc = xloc.bar_index, textalign = text.align_left, style = label.style_label_left, textcolor = fib_lbl_color, color = color.new(color.black, 100), size = size_fib_lbl_cached)
+            array.push(fibLabels, lbR)
+
+    trend
+
+f_draw_candidates(i0, y0, i1, y1, col, rank) =>
+    // OPTIMIZACIÓN: Usar estilo y tamaño cacheados
+    ln = line.new(i0, y0, i1, y1, xloc = xloc.bar_index, extend = extend.none, width = ptq_cand_w, style = line_style_cand_cached, color = col)
+    array.push(candLines, ln)
+    yTop = math.max(y0, y1)
+    yOff = yTop + math.abs(y1 - y0) * 0.03
+    mid = math.floor((i0 + i1) * 0.5)
+    lb = label.new(mid, yOff, str.tostring(rank), xloc = xloc.bar_index, style = label.style_label_down, textcolor = ptq_cand_lbl_txt, color = color.new(col, ptq_cand_lbl_bg_op), size = size_ptq_lbl_cached)
+    array.push(candLabels, lb)
+
+// ============================================================
+// CONCURSO DE POPULARIDAD (CP)
+// ============================================================
+f_collect_active_fibo_factors() =>
+    af = array.new_float()
+    for i = 0 to 17
+        if (only_active_levels and array.get(fib_levels_enabled, i)) or (not only_active_levels)
+            array.push(af, array.get(fib_levels_values, i))
+    af
+
+f_level_price(y0, y1, f, reversed, useLog) =>
+    if useLog
+        ly0 = math.log(math.max(1e-10, y0))
+        ly1 = math.log(math.max(1e-10, y1))
+        frac = reversed ? (1 - f) : f
+        lprice = ly0 + (ly1 - ly0) * frac
+        math.exp(lprice)
+    else
+        frac = reversed ? (1 - f) : f
+        y0 + (y1 - y0) * frac
+
+f_nearest_price_to_level(jOffset, lvlPrice, useO, useH, useL, useC) =>
+    float pstar = na
+    float dstar = na
+    if useO
+        p = open[jOffset]
+        d = math.abs(p - lvlPrice)
+        pstar := p
+        dstar := d
+    if useH
+        p = high[jOffset]
+        d = math.abs(p - lvlPrice)
+        if na(dstar) or d < dstar
+            pstar := p
+            dstar := d
+    if useL
+        p = low[jOffset]
+        d = math.abs(p - lvlPrice)
+        if na(dstar) or d < dstar
+            pstar := p
+            dstar := d
+    if useC
+        p = close[jOffset]
+        d = math.abs(p - lvlPrice)
+        if na(dstar) or d < dstar
+            pstar := p
+            dstar := d
+    [pstar, dstar]
+
+f_phase_popularity_pro(i0, i1, y0, y1, i1P) =>
+    if na(i0) or na(i1) or na(y0) or na(y1)
+        [na, na, na, na]
+    else
+        // OPTIMIZACIÓN: Usar constante pre-calculada en lugar de calcular en cada llamada
+        tol = pop_tolerance
+        arrF = f_collect_active_fibo_factors()
+        szF  = array.size(arrF)
+        int sp = 0
+        int internal = 0
+        float proxSum = 0.0
+        int proxCnt = 0
+        
+        // OPTIMIZACIÓN CRÍTICA: Limitar rango temporal para evitar loops masivos
+        // En lugar de iterar desde i0 hasta bar_index (potencialmente miles de barras),
+        // limitamos a las últimas MAX_BARS_POPULARITY barras o desde i0 (lo que sea menor)
+        int start_bar = math.max(i0, bar_index - MAX_BARS_POPULARITY)
+        
+        for j = start_bar to bar_index
+            jOff = bar_index - j
+            for k = 0 to math.max(0, szF - 1)
+                f = array.get(arrF, k)
+                lvlPrice = f_level_price(y0, y1, f, fib_reversed, fib_logScale)
+                [pstar, dstar] = f_nearest_price_to_level(jOff, lvlPrice, useO, useH, useL, useC)
+                if not na(dstar)
+                    rel = math.abs(pstar - lvlPrice) / math.max(math.abs(lvlPrice), 1e-10)
+                    if rel <= tol
+                        bool is_old = i1 < i1P
+                        bool allow = cp_freeze_old ? ((is_old and j < i1P) or (not is_old)) : true
+                        if allow
+                            sp += 1
+                            proxSum += rel
+                            proxCnt += 1
+                            if f <= 1.0
+                                internal += 1
+        [sp, internal, proxSum, proxCnt]
+
+f_avg_prox(sum, cnt) =>
+    cnt > 0 ? sum / cnt : 1e9
+
+f_is_better(spA, intA, avgA, spB, intB, avgB) =>
+    spA > spB or (spA == spB and intA > intB) or (spA == spB and intA == intB and avgA < avgB)
+
+f_sp_label_xy(i0, i1, y0, y1) =>
+    len = math.max(1, i1 - i0)
+    mid = math.floor((i0 + i1) * 0.5)
+    x  = mid + math.max(1, math.round(len * 0.04))
+    yTop = math.max(y0, y1)
+    y  = yTop + math.abs(y1 - y0) * 0.25
+    [x, y]
+
+// ============================================================
+// ZIGZAG: Cálculo y dibujo
+// ============================================================
+offset = 1
+showLabel = showLabels
+themeColors = theme.getColors()
+
+getZigzag() =>
+    indicators = matrix.new<float>()
+    indicatorNames = array.new<string>()
+    var zg.Zigzag zigzag = zg.Zigzag.new(zigzagLength, depth, offset)
+    [lh, ll, lt] = request.security_lower_tf('', '', [highSource, lowSource, time])
+    lowTime = time
+    highTime = time
+    if lt.size() > 0
+        highestIndex = lh.sort_indices(order.descending).get(0)
+        lowestIndex = ll.sort_indices(order.ascending).get(0)
+        lowTime := lt.get(lowestIndex)
+        highTime := lt.get(highestIndex)
+    zigzag.calculate(array.from(highSource, lowSource), indicators, indicatorNames, highTime, lowTime)
+    if zigzag.zigzagPivots.size() < 0
+        zigzag.zigzagPivots := zigzag.zigzagPivots.slice(0, zigzag.zigzagPivots.size())
+    barstate.islast ? zigzag : na
+
+indicatorTf = timeframe.in_seconds('') > timeframe.in_seconds(timeframe) ? '' : timeframe
+zigzag = request.security('', indicatorTf, getZigzag())
+
+// ============================================================
+// DIBUJO DE ZIGZAG Y NIVELES
+// ============================================================
+// Control del switch supremo - Solo dibuja si no está desactivado
+if barstate.islast and not disable_all_graphics
+    var array<zg.ZigzagDrawingPL> drawingArray = array.new<zg.ZigzagDrawingPL>()
+    var firstDraw = true
+    var lastPivotBar = 0
+    var bool prevShowLabels = showLabels
+    var bool prevShowSublevels = showSublevels
+    var int prevHighlight = highlight
+    labelsChanged = showLabels != prevShowLabels
+    sublevelsChanged = showSublevels != prevShowSublevels
+    levelChanged = highlight != prevHighlight
+    
+    if firstDraw or zigzag.flags.newPivot or labelsChanged or levelChanged or sublevelsChanged
+        sz = drawingArray.size()
+        if sz > 0
+            for di = 0 to sz - 1
+                d = drawingArray.get(di)
+                if not na(d)
+                    d.clear()
+        drawingArray.clear()
+        prevShowLabels := showLabels
+        prevShowSublevels := showSublevels
+        prevHighlight := highlight
+        firstDraw := false
+
+        mlzigzag = zigzag
+        rowNum = 0
+        var legend = table.new(position = position.top_right, columns = 2, rows = 100, border_width = 1)
+        table.clear(legend, 0, 0, 1, 99)
+        
+        while mlzigzag.zigzagPivots.size() > 3
+            labelColor = themeColors.remove(0)
+            themeColors.push(labelColor)
+            highlightLevel = rowNum == highlight
+            lineWidth = highlightLevel ? 2 : (showSublevels ? 2 : 0)
+            lineStyle = highlightLevel ? line.style_solid : line.style_dotted
+            lineColor = highlightLevel ? labelColor : color.new(labelColor, showSublevels ? 55 : 100)
+            
+            if highlightLevel and not showHighlightTrace
+                lineWidth := 0
+                lineColor := color.new(lineColor, 100)
+
+            if zz_sel_use_custom and highlightLevel
+                lineColor := color.new(zz_sel_color, zz_sel_op)
+                lineStyle := f_line_style(zz_sel_style)
+                lineWidth := zz_sel_w
+            
+            zg.ZigzagProperties props = zg.ZigzagProperties.new(lineColor, lineWidth, lineStyle, highlightLevel, maxObjects = depth, curved = false)
+            props.showLabel := false  // Desactivamos etiquetas de la librería - usaremos las nuestras
+            zg.ZigzagDrawingPL drawing = zg.ZigzagDrawingPL.new(mlzigzag, props)
+            drawing.drawplain()
+            drawingArray.push(drawing)
+            
+            // ============================================================
+            // ETIQUETAS PROPIAS CON COORDENADAS (Tiempo/Precio)
+            // ============================================================
+            if showLabels and highlightLevel and showHighlightTrace
+                // Iterar sobre los pivots del nivel seleccionado
+                for i = 0 to mlzigzag.zigzagPivots.size() > 1 ? mlzigzag.zigzagPivots.size() - 2 : na
+                    pivot = mlzigzag.zigzagPivots.get(i)
+                    
+                    // Determinar tipo de pivot según dirección
+                    // dir: 2=HH, 1=HL, -1=LH, -2=LL
+                    pivotType = pivot.dir == 2 ? "HH" : pivot.dir == 1 ? "HL" : pivot.dir == -1 ? "LH" : "LL"
+                    
+                    // Formatear fecha (dd-MMM-yy)
+                    pivotDate = str.format("{0,date,dd-MMM-yy}", pivot.point.time)
+                    
+                    // Formatear hora (HH:mm)
+                    pivotTime = str.format("{0,time,HH:mm}", pivot.point.time)
+                    
+                    // Formatear precio con separadores de miles
+                    pivotPrice = f_price_text(pivot.point.price)
+                    
+                    // Construir texto de etiqueta (formato compacto 3 líneas)
+                    labelText = pivotType + "\n" + pivotDate + " " + pivotTime + "\n" + pivotPrice
+                    
+                    // Determinar estilo y color según dirección
+                    // dir: 2=HH(verde), 1=HL(naranja), -1=LH(lima), -2=LL(rojo)
+                    labelStyle = pivot.dir > 0 ? label.style_label_down : label.style_label_up
+                    lblColor = pivot.dir == 2 ? color.green : pivot.dir == 1 ? color.orange : pivot.dir == -1 ? color.lime : color.red
+                    
+                    // Crear etiqueta con coordenadas
+                    label.new(pivot.point, yloc = yloc.price, color = lblColor, style = labelStyle, text = labelText, textcolor = color.black, size = size.small, xloc = xloc.bar_time)
+            
+            if highlightLevel and enableAlerts
+                alertPivotPoint = mlzigzag.zigzagPivots.get(1)
+                if lastPivotBar < alertPivotPoint.point.index
+                    lastPivotBar := alertPivotPoint.point.index
+            
+            table.cell(legend, 0, rowNum, 'Level' + str.tostring(rowNum), text_color = lineColor, bgcolor = color.new(labelColor, highlightLevel ? 90 : 50), text_size = highlightLevel ? size.normal : size.small)
+            mlzigzag := mlzigzag.nextlevel()
+            rowNum += 1
+
+// ============================================================
+// PTQ + FIBONACCI + LP + CP
+// ============================================================
+// Control del switch supremo - Solo dibuja si no está desactivado
+if barstate.islast and not disable_all_graphics
+    lvl = zigzag
+    for k = 0 to math.max(0, highlight - 1)
+        lvl := lvl.nextlevel()
+
+    [bestS, i0, i1, y0, y1, A, T, PARA, s2, i0_2, i1_2, y0_2, y1_2, A2, T2, P2, s3, i0_3, i1_3, y0_3, y1_3, A3, T3, P3] = f_ptq_for_level(lvl, ptq_useParab, ptq_gamma, ptq_regime)
+
+    // Fallback si sin candidatas
+    if na(bestS)
+        [bestS_f, i0_f, i1_f, y0_f, y1_f, A_f, T_f, PARA_f, s2_f, i0_2f, i1_2f, y0_2f, y1_2f, A2_f, T2_f, P2_f, s3_f, i0_3f, i1_3f, y0_3f, y1_3f, A3_f, T3_f, P3_f] = f_ptq_for_level(lvl, ptq_useParab, ptq_gamma, "Plano(a)")
+        bestS := bestS_f
+        i0 := i0_f
+        i1 := i1_f
+        y0 := y0_f
+        y1 := y1_f
+        A := A_f
+        T := T_f
+        PARA := PARA_f
+        s2 := s2_f
+        i0_2 := i0_2f
+        i1_2 := i1_2f
+        y0_2 := y0_2f
+        y1_2 := y1_2f
+        A2 := A2_f
+        T2 := T2_f
+        P2 := P2_f
+        s3 := s3_f
+        i0_3 := i0_3f
+        i1_3 := i1_3f
+        y0_3 := y0_3f
+        y1_3 := y1_3f
+        A3 := A3_f
+        T3 := T3_f
+        P3 := P3_f
+
+    // Selección de fase para Fibo
+    i0_sel := na(i0) ? na : i0
+    i1_sel := na(i1) ? na : i1
+    y0_sel := na(y0) ? na : y0
+    y1_sel := na(y1) ? na : y1
+
+    if fib_candidate_source == "Top-2" and not na(i0_2) and not na(i1_2)
+        i0_sel := i0_2
+        i1_sel := i1_2
+        y0_sel := y0_2
+        y1_sel := y1_2
+    else if fib_candidate_source == "Top-3" and not na(i0_3) and not na(i1_3)
+        i0_sel := i0_3
+        i1_sel := i1_3
+        y0_sel := y0_3
+        y1_sel := y1_3
+
+    // Dibujo Fibonacci
+    fibTrend := f_clear_fib(fibTrend)
+    if fib_enable and not na(i0_sel) and not na(i1_sel) and not na(y0_sel) and not na(y1_sel)
+        fibTrend := f_draw_fib(i0_sel, y0_sel, i1_sel, y1_sel)
+
+    // Dibujo candidatas
+    f_clear_candidates()
+    if ptq_showCandidates
+        if not na(i0) and not na(i1)
+            f_draw_candidates(i0, y0, i1, y1, ptq_c1, 1)
+        if not na(i0_2) and not na(i1_2)
+            f_draw_candidates(i0_2, y0_2, i1_2, y1_2, ptq_c2, 2)
+        if not na(i0_3) and not na(i1_3)
+            f_draw_candidates(i0_3, y0_3, i1_3, y1_3, ptq_c3, 3)
+    
+    // Concurso de popularidad
+    int sp1 = na
+    int sp2 = na
+    int sp3 = na
+    int sp1_int = na
+    int sp2_int = na
+    int sp3_int = na
+    float sp1_sum = na
+    float sp2_sum = na
+    float sp3_sum = na
+    int sp1_cnt = na
+    int sp2_cnt = na
+    int sp3_cnt = na
+    float sp1_avg = na
+    float sp2_avg = na
+    float sp3_avg = na
+    
+    if calc_popularity
+        [ts1, ti1, ss1, sc1] = f_phase_popularity_pro(i0, i1, y0, y1, i1)
+        sp1 := ts1
+        sp1_int := ti1
+        sp1_sum := ss1
+        sp1_cnt := sc1
+        if not na(i0_2) and not na(i1_2)
+            [ts2, ti2, ss2, sc2] = f_phase_popularity_pro(i0_2, i1_2, y0_2, y1_2, i1)
+            sp2 := ts2
+            sp2_int := ti2
+            sp2_sum := ss2
+            sp2_cnt := sc2
+        if not na(i0_3) and not na(i1_3)
+            [ts3, ti3, ss3, sc3] = f_phase_popularity_pro(i0_3, i1_3, y0_3, y1_3, i1)
+            sp3 := ts3
+            sp3_int := ti3
+            sp3_sum := ss3
+            sp3_cnt := sc3
+        
+        sp1_avg := f_avg_prox(sp1_sum, sp1_cnt)
+        sp2_avg := f_avg_prox(sp2_sum, sp2_cnt)
+        sp3_avg := f_avg_prox(sp3_sum, sp3_cnt)
+
+        int cp_leader = na
+        int best_sp = na
+        int best_int = na
+        float best_avg = na
+        
+        cp_leader := 1
+        best_sp := sp1
+        best_int := sp1_int
+        best_avg := sp1_avg
+        if not na(sp2) and f_is_better(sp2, sp2_int, sp2_avg, best_sp, best_int, best_avg)
+            cp_leader := 2
+            best_sp := sp2
+            best_int := sp2_int
+            best_avg := sp2_avg
+        if not na(sp3) and f_is_better(sp3, sp3_int, sp3_avg, best_sp, best_int, best_avg)
+            cp_leader := 3
+            best_sp := sp3
+            best_int := sp3_int
+            best_avg := sp3_avg
+
+        cp_changed_signal := false
+        if not na(cp_leader)
+            if not na(cp_prevLeader) and (cp_leader != cp_prevLeader)
+                cp_changed_signal := true
+            cp_prevLeader := cp_leader
+        cp_leader_sig := cp_leader
+
+    // Etiquetas CP
+    if ptq_showCandidates and calc_popularity
+        if not na(i0) and not na(i1) and not na(sp1)
+            [x1, y1p] = f_sp_label_xy(i0, i1, y0, y1)
+            // OPTIMIZACIÓN: Usar tamaño cacheado
+            lb1 = label.new(x1, y1p, "CP=" + str.tostring(sp1), xloc = xloc.bar_index, style = label.style_label_down, textcolor = ptq_cand_lbl_txt, color = color.new(color.black, ptq_cand_lbl_bg_op), size = size_ptq_lbl_cached)
+            array.push(candLabels, lb1)
+        if not na(i0_2) and not na(i1_2) and not na(sp2)
+            [x2, y2p] = f_sp_label_xy(i0_2, i1_2, y0_2, y1_2)
+            // OPTIMIZACIÓN: Usar tamaño cacheado
+            lb2 = label.new(x2, y2p, "CP=" + str.tostring(sp2), xloc = xloc.bar_index, style = label.style_label_down, textcolor = ptq_cand_lbl_txt, color = color.new(color.black, ptq_cand_lbl_bg_op), size = size_ptq_lbl_cached)
+            array.push(candLabels, lb2)
+        if not na(i0_3) and not na(i1_3) and not na(sp3)
+            [x3, y3p] = f_sp_label_xy(i0_3, i1_3, y0_3, y1_3)
+            // OPTIMIZACIÓN: Usar tamaño cacheado
+            lb3 = label.new(x3, y3p, "CP=" + str.tostring(sp3), xloc = xloc.bar_index, style = label.style_label_down, textcolor = ptq_cand_lbl_txt, color = color.new(color.black, ptq_cand_lbl_bg_op), size = size_ptq_lbl_cached)
+            array.push(candLabels, lb3)
+
+    // Tabla Top-3
+    if ptq_showDiag and not na(i0)
+        // Convertir posición de string a position
+        tbl_pos = ptq_table_pos == "top_left" ? position.top_left : 
+                  ptq_table_pos == "top_center" ? position.top_center :
+                  ptq_table_pos == "top_right" ? position.top_right :
+                  ptq_table_pos == "middle_left" ? position.middle_left :
+                  ptq_table_pos == "middle_center" ? position.middle_center :
+                  ptq_table_pos == "middle_right" ? position.middle_right :
+                  ptq_table_pos == "bottom_left" ? position.bottom_left :
+                  ptq_table_pos == "bottom_center" ? position.bottom_center :
+                  position.bottom_right
+        
+        var table t = table.new(tbl_pos, 6, 8, frame_color = color.gray, frame_width = 2, border_color = color.gray, border_width = 1)
+        table.clear(t, 0,0, 5,7)
+        colTblTxt = color.new(ptq_tbl_text_color, ptq_tbl_text_opacity)
+        colHeader = color.new(color.blue, 30)  // Fondo azul para encabezados
+        
+        // Encabezado principal (fila 0)
+        table.cell(t, 0,0, "Top-3 fases", text_color = color.white, bgcolor = color.new(color.navy, 0), text_size = size.normal)
+        table.cell(t, 1,0, "", bgcolor = color.new(color.navy, 0))
+        table.cell(t, 2,0, "", bgcolor = color.new(color.navy, 0))
+        table.cell(t, 3,0, "", bgcolor = color.new(color.navy, 0))
+        table.cell(t, 4,0, "", bgcolor = color.new(color.navy, 0))
+        table.cell(t, 5,0, "", bgcolor = color.new(color.navy, 0))
+        
+        // Encabezados de columna (fila 1)
+        table.cell(t, 0,1, "Rank", text_color = color.white, bgcolor = colHeader, text_size = size.small)
+        table.cell(t, 1,1, "i0→i1", text_color = color.white, bgcolor = colHeader, text_size = size.small)
+        table.cell(t, 2,1, "A·T", text_color = color.white, bgcolor = colHeader, text_size = size.small)
+        table.cell(t, 3,1, "PARA", text_color = color.white, bgcolor = colHeader, text_size = size.small)
+        table.cell(t, 4,1, "Score", text_color = color.white, bgcolor = colHeader, text_size = size.small)
+        table.cell(t, 5,1, "CP", text_color = color.white, bgcolor = colHeader, text_size = size.small)
+
+        // Fila 1 de datos (Top-1)
+        table.cell(t, 0, 2, "1", text_color = colTblTxt, text_size = size.small)
+        table.cell(t, 1, 2, str.tostring(i1) + "→" + str.tostring(i0), text_color = colTblTxt, text_size = size.small)
+        table.cell(t, 2, 2, str.tostring(A*T, format.mintick), text_color = colTblTxt, text_size = size.small)
+        table.cell(t, 3, 2, str.tostring(PARA, format.mintick), text_color = colTblTxt, text_size = size.small)
+        table.cell(t, 4, 2, str.tostring(bestS, format.mintick), text_color = colTblTxt, text_size = size.small)
+        table.cell(t, 5, 2, calc_popularity ? str.tostring(sp1) : "", text_color = colTblTxt, text_size = size.small, bgcolor = (calc_popularity and cp_leader_sig == 1) ? color.new(color.yellow, 70) : na)
+
+        // Fila 2 de datos (Top-2)
+        if not na(s2)
+            table.cell(t, 0, 3, "2", text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 1, 3, str.tostring(i1_2) + "→" + str.tostring(i0_2), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 2, 3, str.tostring(A2*T2, format.mintick), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 3, 3, str.tostring(P2, format.mintick), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 4, 3, str.tostring(s2, format.mintick), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 5, 3, calc_popularity and not na(sp2) ? str.tostring(sp2) : "", text_color = colTblTxt, text_size = size.small, bgcolor = (calc_popularity and cp_leader_sig == 2) ? color.new(color.yellow, 70) : na)
+
+        // Fila 3 de datos (Top-3)
+        if not na(s3)
+            table.cell(t, 0, 4, "3", text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 1, 4, str.tostring(i1_3) + "→" + str.tostring(i0_3), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 2, 4, str.tostring(A3*T3, format.mintick), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 3, 4, str.tostring(P3, format.mintick), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 4, 4, str.tostring(s3, format.mintick), text_color = colTblTxt, text_size = size.small)
+            table.cell(t, 5, 4, calc_popularity and not na(sp3) ? str.tostring(sp3) : "", text_color = colTblTxt, text_size = size.small, bgcolor = (calc_popularity and cp_leader_sig == 3) ? color.new(color.yellow, 70) : na)
+
+        // ============================================================
+        // COORDENADAS DE FASE SELECCIONADA (Filas 5-7)
+        // ============================================================
+        
+        // Determinar qué fase está seleccionada
+        string fase_sel_text = fib_candidate_source == "Top-2" and not na(i0_2) ? "Top-2" : 
+                               fib_candidate_source == "Top-3" and not na(i0_3) ? "Top-3" : "Top-1"
+        
+        // Calcular timestamps de la fase seleccionada
+        int t_i0 = na(i0_sel) ? na : time[bar_index - i0_sel]
+        int t_i1 = na(i1_sel) ? na : time[bar_index - i1_sel]
+        
+        // Fila 5: Separador / Encabezado de coordenadas
+        colCoord = color.new(color.green, 50)
+        table.cell(t, 0, 5, "Fase Sel:", text_color = color.white, bgcolor = colCoord, text_size = size.small)
+        table.cell(t, 1, 5, fase_sel_text, text_color = color.yellow, bgcolor = colCoord, text_size = size.small)
+        table.cell(t, 2, 5, "", bgcolor = colCoord)
+        table.cell(t, 3, 5, "", bgcolor = colCoord)
+        table.cell(t, 4, 5, "", bgcolor = colCoord)
+        table.cell(t, 5, 5, "", bgcolor = colCoord)
+        
+        // Fila 6: Coordenadas i0 (MOSTRANDO i1 para inversión cosmética)
+        if not na(i1_sel) and not na(t_i1) and not na(y1_sel)
+            // Formatear fecha i1 (dd-MMM-yy HH:mm)
+            str_fecha_i1 = str.format("{0,date,dd-MMM-yy} {0,time,HH:mm}", t_i1)
+            // Formatear precio i1
+            str_precio_i1 = f_price_text(y1_sel)
+            
+            table.cell(t, 0, 6, "i0:", text_color = colTblTxt, bgcolor = color.new(color.gray, 85), text_size = size.small)
+            table.cell(t, 1, 6, str_fecha_i1, text_color = colTblTxt, bgcolor = color.new(color.gray, 90), text_size = size.small)
+            table.cell(t, 2, 6, "", bgcolor = color.new(color.gray, 90))
+            table.cell(t, 3, 6, "", bgcolor = color.new(color.gray, 90))
+            table.cell(t, 4, 6, "💰 " + str_precio_i1, text_color = color.yellow, bgcolor = color.new(color.gray, 90), text_size = size.small)
+            table.cell(t, 5, 6, "", bgcolor = color.new(color.gray, 90))
+        
+        // Fila 7: Coordenadas i1 (MOSTRANDO i0 para inversión cosmética)
+        if not na(i0_sel) and not na(t_i0) and not na(y0_sel)
+            // Formatear fecha i0 (dd-MMM-yy HH:mm)
+            str_fecha_i0 = str.format("{0,date,dd-MMM-yy} {0,time,HH:mm}", t_i0)
+            // Formatear precio i0
+            str_precio_i0 = f_price_text(y0_sel)
+            
+            table.cell(t, 0, 7, "i1:", text_color = colTblTxt, bgcolor = color.new(color.gray, 85), text_size = size.small)
+            table.cell(t, 1, 7, str_fecha_i0, text_color = colTblTxt, bgcolor = color.new(color.gray, 90), text_size = size.small)
+            table.cell(t, 2, 7, "", bgcolor = color.new(color.gray, 90))
+            table.cell(t, 3, 7, "", bgcolor = color.new(color.gray, 90))
+            table.cell(t, 4, 7, "💰 " + str_precio_i0, text_color = color.yellow, bgcolor = color.new(color.gray, 90), text_size = size.small)
+            table.cell(t, 5, 7, "", bgcolor = color.new(color.gray, 90))
+
+// ============================================================
+// PLOTS DE NIVELES FIBONACCI EN ESCALA DE PRECIOS
+// ============================================================
+// Calcular precios de niveles Fibonacci para plots
+fib_bs = fib_reversed ? y1_sel : y0_sel
+fib_be = fib_reversed ? y0_sel : y1_sel
+fib_bsL = fib_logScale ? math.log(fib_bs) : fib_bs
+fib_beL = fib_logScale ? math.log(fib_be) : fib_be
+
+// Plot de cada nivel activo
+fib_price_0    = (fib_enable and fibo0 and not na(i0_sel))    ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 0.0)    : (fib_bs + (fib_be - fib_bs) * 0.0))    : na
+fib_price_236  = (fib_enable and fibo236 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 0.236)  : (fib_bs + (fib_be - fib_bs) * 0.236))  : na
+fib_price_382  = (fib_enable and fibo382 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 0.382)  : (fib_bs + (fib_be - fib_bs) * 0.382))  : na
+fib_price_50   = (fib_enable and fibo50 and not na(i0_sel))   ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 0.5)    : (fib_bs + (fib_be - fib_bs) * 0.5))    : na
+fib_price_618  = (fib_enable and fibo618 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 0.618)  : (fib_bs + (fib_be - fib_bs) * 0.618))  : na
+fib_price_786  = (fib_enable and fibo786 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 0.786)  : (fib_bs + (fib_be - fib_bs) * 0.786))  : na
+fib_price_812  = (fib_enable and fibo812 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 0.812)  : (fib_bs + (fib_be - fib_bs) * 0.812))  : na
+fib_price_100  = (fib_enable and fibo100 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 1.0)    : (fib_bs + (fib_be - fib_bs) * 1.0))    : na
+fib_price_1236 = (fib_enable and fibo1236 and not na(i0_sel)) ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 1.236)  : (fib_bs + (fib_be - fib_bs) * 1.236))  : na
+fib_price_125  = (fib_enable and fibo125 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 1.25)   : (fib_bs + (fib_be - fib_bs) * 1.25))   : na
+fib_price_150  = (fib_enable and fibo150 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 1.5)    : (fib_bs + (fib_be - fib_bs) * 1.5))    : na
+fib_price_1618 = (fib_enable and fibo1618 and not na(i0_sel)) ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 1.618)  : (fib_bs + (fib_be - fib_bs) * 1.618))  : na
+fib_price_200  = (fib_enable and fibo200 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 2.0)    : (fib_bs + (fib_be - fib_bs) * 2.0))    : na
+fib_price_250  = (fib_enable and fibo250 and not na(i0_sel))  ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 2.5)    : (fib_bs + (fib_be - fib_bs) * 2.5))    : na
+fib_price_2618 = (fib_enable and fibo2618 and not na(i0_sel)) ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * 2.618)  : (fib_bs + (fib_be - fib_bs) * 2.618))  : na
+fib_price_c1   = (fib_enable and fibo_custom1_on and not na(i0_sel)) ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * fibo_custom1_val) : (fib_bs + (fib_be - fib_bs) * fibo_custom1_val)) : na
+fib_price_c2   = (fib_enable and fibo_custom2_on and not na(i0_sel)) ? (fib_logScale ? math.exp(fib_bsL + (fib_beL - fib_bsL) * fibo_custom2_val) : (fib_bs + (fib_be - fib_bs) * fibo_custom2_val)) : na
+
+// Plots en escala de precios (solo si no está apagado por switch supremo)
+plot(disable_all_graphics ? na : fib_price_0,    "Fibo 0%",     color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_236,  "Fibo 23.6%",  color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_382,  "Fibo 38.2%",  color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_50,   "Fibo 50%",    color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_618,  "Fibo 61.8%",  color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_786,  "Fibo 78.6%",  color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_812,  "Fibo 81.2%",  color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_100,  "Fibo 100%",   color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_1236, "Fibo 123.6%", color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_125,  "Fibo 125%",   color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_150,  "Fibo 150%",   color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_1618, "Fibo 161.8%", color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_200,  "Fibo 200%",   color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_250,  "Fibo 250%",   color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_2618, "Fibo 261.8%", color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_c1,   "Fibo Custom 1", color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+plot(disable_all_graphics ? na : fib_price_c2,   "Fibo Custom 2", color=fib_lvl_global_color, linewidth=1, display=display.price_scale)
+//
+// Final del codigo
